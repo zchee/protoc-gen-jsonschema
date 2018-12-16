@@ -1,0 +1,235 @@
+{
+  "title": "Kubernetes yaml JSON Schema",
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "definitions": {
+    "io.k8s.kubernetes.pkg.api.v1.NodeDaemonEndpoints": {
+      "description": "NodeDaemonEndpoints lists ports opened by daemons running on the Node.",
+      "properties": {
+        "kubeletEndpoint": {
+          "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.DaemonEndpoint",
+          "description": "Endpoint on which Kubelet is listening."
+        }
+      },
+      "additionalProperties": false
+    },
+    "io.k8s.kubernetes.pkg.api.v1.DeprecatedDownwardAPIVolumeFile": {
+      "properties": {
+        "resourceFieldRef": {
+          "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.ResourceFieldSelector",
+          "description": "Selects a resource of the container: only resources limits and requests (limits.cpu, limits.memory, requests.cpu and requests.memory) are currently supported."
+        },
+        "name": {
+          "type": "string",
+          "description": "Required: Name is the relative path name of the file to be created. Must not be absolute or contain the '..' path. Must be utf-8 encoded. The first item of the relative path must not start with '..'"
+        },
+        "fieldRef": {
+          "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.ObjectFieldSelector",
+          "description": "Required: Selects a field of the pod: only annotations, labels, name and namespace are supported."
+        },
+        "mode": {
+          "format": "int32",
+          "type": "integer",
+          "description": "Optional: mode bits to use on this file, must be a value between 0 and 0777. If not specified, the volume defaultMode will be used. This might be in conflict with other options that affect the file mode, like fsGroup, and the result can be other mode bits set."
+        }
+      },
+      "description": "DeprecatedDownwardAPIVolumeFile represents information to create the file containing the pod field This type is deprecated and should be replaced by use of the downwardAPI volume source.",
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "io.k8s.kubernetes.pkg.api.v1.FlexVolumeSource": {
+      "properties": {
+        "options": {
+          "type": "object",
+          "description": "Optional: Extra command options if any.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "fsType": {
+          "type": "string",
+          "description": "Filesystem type to mount. Must be a filesystem type supported by the host operating system. Ex. \"ext4\", \"xfs\", \"ntfs\". The default filesystem depends on FlexVolume script."
+        },
+        "driver": {
+          "type": "string",
+          "description": "Driver is the name of the driver to use for this volume."
+        },
+        "readOnly": {
+          "type": "boolean",
+          "description": "Optional: Defaults to false (read/write). ReadOnly here will force the ReadOnly setting in VolumeMounts."
+        },
+        "secretRef": {
+          "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.LocalObjectReference",
+          "description": "Optional: SecretRef is reference to the secret object containing sensitive information to pass to the plugin scripts. This may be empty if no secret object is specified. If the secret object contains more than one secret, all secrets are passed to the plugin scripts."
+        }
+      },
+      "description": "FlexVolume represents a generic volume resource that is provisioned/attached using an exec based plugin. This is an alpha feature and may change in future.",
+      "additionalProperties": false,
+      "required": [
+        "driver"
+      ]
+    },
+    "io.k8s.kubernetes.pkg.apis.apps.v1beta1.StatefulSetStatus": {
+      "properties": {
+        "replicas": {
+          "format": "int32",
+          "type": "integer",
+          "description": "Replicas is the number of actual replicas."
+        },
+        "observedGeneration": {
+          "format": "int64",
+          "type": "integer",
+          "description": "most recent generation observed by this StatefulSet."
+        }
+      },
+      "description": "StatefulSetStatus represents the current state of a StatefulSet.",
+      "additionalProperties": false,
+      "required": [
+        "replicas"
+      ]
+    },
+    "io.k8s.kubernetes.pkg.apis.authorization.v1.LocalSubjectAccessReview": {
+      "properties": {
+        "status": {
+          "$ref": "#/definitions/io.k8s.kubernetes.pkg.apis.authorization.v1.SubjectAccessReviewStatus",
+          "description": "Status is filled in by the server and indicates whether the request is allowed or not"
+        },
+        "metadata": {
+          "$ref": "#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"
+        },
+        "kind": {
+          "type": "string",
+          "description": "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
+          "enum": [
+            "LocalSubjectAccessReview"
+          ]
+        },
+        "spec": {
+          "$ref": "#/definitions/io.k8s.kubernetes.pkg.apis.authorization.v1.SubjectAccessReviewSpec",
+          "description": "Spec holds information about the request being evaluated.  spec.namespace must be equal to the namespace you made the request against.  If empty, it is defaulted."
+        },
+        "apiVersion": {
+          "type": "string",
+          "description": "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#resources",
+          "enum": [
+            "v1"
+          ]
+        }
+      },
+      "description": "LocalSubjectAccessReview checks whether or not a user or group can perform an action in a given namespace. Having a namespace scoped resource makes it much easier to grant namespace scoped policy that includes permissions checking.",
+      "x-kubernetes-group-version-kind": [
+        {
+          "Kind": "LocalSubjectAccessReview",
+          "Version": "v1",
+          "Group": "authorization.k8s.io"
+        }
+      ],
+      "additionalProperties": false,
+      "required": [
+        "spec"
+      ]
+    },
+    "io.k8s.kubernetes.pkg.apis.rbac.v1beta1.ClusterRoleList": {
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta",
+          "description": "Standard object's metadata."
+        },
+        "items": {
+          "type": "array",
+          "description": "Items is a list of ClusterRoles",
+          "items": {
+            "$ref": "#/definitions/io.k8s.kubernetes.pkg.apis.rbac.v1beta1.ClusterRole"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "description": "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#types-kinds",
+          "enum": [
+            "ClusterRoleList"
+          ]
+        },
+        "apiVersion": {
+          "type": "string",
+          "description": "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#resources",
+          "enum": [
+            "v1beta1"
+          ]
+        }
+      },
+      "description": "ClusterRoleList is a collection of ClusterRoles",
+      "x-kubernetes-group-version-kind": [
+        {
+          "Kind": "ClusterRoleList",
+          "Version": "v1beta1",
+          "Group": "rbac.authorization.k8s.io"
+        }
+      ],
+      "additionalProperties": false,
+      "required": [
+        "items"
+      ]
+    },
+    "io.k8s.kubernetes.pkg.api.v1.EventSource": {
+      "description": "EventSource contains information for an event.",
+      "properties": {
+        "host": {
+          "type": "string",
+          "description": "Node name on which the event is generated."
+        },
+        "component": {
+          "type": "string",
+          "description": "Component from which the event is generated."
+        }
+      },
+      "additionalProperties": false
+    },
+    "io.k8s.kubernetes.pkg.api.v1.PodAffinity": {
+      "description": "Pod affinity is a group of inter pod affinity scheduling rules.",
+      "properties": {
+        "requiredDuringSchedulingIgnoredDuringExecution": {
+          "type": "array",
+          "description": "NOT YET IMPLEMENTED. TODO: Uncomment field once it is implemented. If the affinity requirements specified by this field are not met at scheduling time, the pod will not be scheduled onto the node. If the affinity requirements specified by this field cease to be met at some point during pod execution (e.g. due to a pod label update), the system will try to eventually evict the pod from its node. When there are multiple elements, the lists of nodes corresponding to each podAffinityTerm are intersected, i.e. all terms must be satisfied. RequiredDuringSchedulingRequiredDuringExecution []PodAffinityTerm  `json:\"requiredDuringSchedulingRequiredDuringExecution,omitempty\"` If the affinity requirements specified by this field are not met at scheduling time, the pod will not be scheduled onto the node. If the affinity requirements specified by this field cease to be met at some point during pod execution (e.g. due to a pod label update), the system may or may not try to eventually evict the pod from its node. When there are multiple elements, the lists of nodes corresponding to each podAffinityTerm are intersected, i.e. all terms must be satisfied.",
+          "items": {
+            "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.PodAffinityTerm"
+          }
+        },
+        "preferredDuringSchedulingIgnoredDuringExecution": {
+          "type": "array",
+          "description": "The scheduler will prefer to schedule pods to nodes that satisfy the affinity expressions specified by this field, but it may choose a node that violates one or more of the expressions. The node that is most preferred is the one with the greatest sum of weights, i.e. for each node that meets all of the scheduling requirements (resource request, requiredDuringScheduling affinity expressions, etc.), compute a sum by iterating through the elements of this field and adding \"weight\" to the sum if the node has pods which matches the corresponding podAffinityTerm; the node(s) with the highest sum are the most preferred.",
+          "items": {
+            "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.WeightedPodAffinityTerm"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.NodeDaemonEndpoints"
+    },
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.DeprecatedDownwardAPIVolumeFile"
+    },
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.FlexVolumeSource"
+    },
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.apis.apps.v1beta1.StatefulSetStatus"
+    },
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.apis.authorization.v1.LocalSubjectAccessReview"
+    },
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.apis.rbac.v1beta1.ClusterRoleList"
+    },
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.EventSource"
+    },
+    {
+      "$ref": "#/definitions/io.k8s.kubernetes.pkg.api.v1.PodAffinity"
+    }
+  ]
+}
