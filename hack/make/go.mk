@@ -28,23 +28,14 @@ GO_TEST_FLAGS ?=
 GO_BENCH_FUNC ?= .
 GO_BENCH_FLAGS ?= -benchmem
 
-VET_LINTERS := asmdecl assign atomic bools buildtag cgocall copylocks httpresponse loopclosure lostcancel nilfunc nilness pkgfact shift stdmethods structtag tests unreachable unsafeptr  # composites -composites.whitelist '' findcall -findcall.name '' printf -printf.funcs '' unusedresult -unusedresult.funcs '' -unusedresult.stringmethods ''
-GOLANGCI_LINTERS := deadcode dupl errcheck goconst gocyclo golint gosec ineffassign interfacer maligned megacheck structcheck unconvert varcheck 
-ifeq ($(wildcard '.errcheckignore'),)
-	GOLANGCI_EXCLUDE=$(foreach pat,$(shell cat .errcheckignore),--exclude '$(pat)')
-endif
-GOLANGCI_CONFIG ?=
-ifeq ($(wildcard '.golangci.yml'),)
-	GOLANGCI_CONFIG=--config .golangci.yml
-endif
-
 IMAGE_REGISTRY := quay.io/zchee
 
 # ----------------------------------------------------------------------------
 # defines
 
+GOPHER = ""
 define target
-@printf "+ \\033[32m$(patsubst ,$@,$(1))\\033[0m\\n"
+@printf "$(GOPHER)  \\033[32m$(patsubst ,$@,$(1))\\033[0m\\n"
 endef
 
 # ----------------------------------------------------------------------------
@@ -79,31 +70,6 @@ test:  ## Run the package test with checks race condition.
 	$(call target)
 	$(GO_TEST) -v -race $(strip $(GOFLAGS)) -run=$(GO_TEST_FUNC) $(GO_TEST_PKGS)
 
-.PHONY: test/cpu
-test/cpu: GOFLAGS+=-cpuprofile cpu.out
-test/cpu: test  ## Run the package test with take a cpu profiling.
-	$(call target)
-
-.PHONY: test/mem
-test/mem: GOFLAGS+=-memprofile mem.out
-test/mem: test  ## Run the package test with take a memory profiling.
-	$(call target)
-
-.PHONY: test/mutex
-test/mutex: GOFLAGS+=-mutexprofile mutex.out
-test/mutex: test  ## Run the package test with take a mutex profiling.
-	$(call target)
-
-.PHONY: test/block
-test/block: GOFLAGS+=-blockprofile block.out
-test/block: test  ## Run the package test with take a blockingh profiling.
-	$(call target)
-
-.PHONY: test/trace
-test/trace: GOFLAGS+=-trace trace.out
-test/trace: test  ## Run the package test with take a trace profiling.
-	$(call target)
-
 .PHONY: bench
 bench:  ## Take a package benchmark.
 	$(call target)
@@ -113,10 +79,6 @@ bench:  ## Take a package benchmark.
 bench/race:  ## Take a package benchmark with checks race condition.
 	$(call target)
 	$(GO_TEST) -v -race $(strip $(GOFLAGS)) -run='^$$' -bench=$(GO_BENCH_FUNC) -benchmem $(GO_TEST_PKGS)
-
-.PHONY: bench/cpu
-bench/cpu: GOFLAGS+=-cpuprofile cpu.out
-bench/cpu: bench  ## Take a package benchmark with take a cpu profiling.
 
 .PHONY: bench/trace
 bench/trace:  ## Take a package benchmark with take a trace profiling.
@@ -136,18 +98,18 @@ cmd/go-junit-report: $(GO_PATH)/bin/go-junit-report  # go get 'go-junit-report' 
 .PHONY: coverage/junit
 coverage/junit: cmd/go-junit-report  ## Take test coverage and output test results with junit syntax.
 	$(call target)
-	mkdir -p _test-results
+	@mkdir -p _test-results
 	$(GO_TEST) -v -race $(strip $(GOFLAGS)) -covermode=atomic -coverpkg=$(PKG)/... -coverprofile=coverage.out $(GO_TEST_PKGS) 2>&1 | tee /dev/stderr | go-junit-report -set-exit-code > _test-results/report.xml
 
 
 ## lint
 
-lint: lint/fmt lint/govet lint/golint lint/vet lint/golangci-lint  ## Run all linters.
+lint: lint/fmt lint/govet lint/golint lint/golangci-lint  ## Run all linters.
 
 .PHONY: lint/fmt
 lint/fmt:  ## Verifies all files have been `gofmt`ed.
 	$(call target)
-	@gofmt -s -l . | grep -v '.pb.go' | tee /dev/stderr
+	@gofmt -s -l . | grep -v -e 'vendor' -e '.pb.go' -e '_*.go' | tee /dev/stderr
 
 .PHONY: lint/govet
 lint/govet:  ## Verifies `go vet` passes.
@@ -155,7 +117,7 @@ lint/govet:  ## Verifies `go vet` passes.
 	@go vet -all $(GO_PKGS) | tee /dev/stderr
 
 $(GO_PATH)/bin/golint:
-	@go get -u golang.org/x/lint/golint
+	@GO111MODULE=off go get -u golang.org/x/lint/golint || GO111MODULE=off go get -u github.com/golang/lint/golint
 
 cmd/golint: $(GO_PATH)/bin/golint  # go get 'golint' binary
 
@@ -164,27 +126,28 @@ lint/golint: cmd/golint  ## Verifies `golint` passes.
 	$(call target)
 	@golint -min_confidence=0.3 -set_exit_status $(GO_PKGS)
 
-lint/vet:  ## Run vet
-	$(call target)
-	@vet $(foreach linter,$(VET_LINTERS),-$(linter).enable) $(GO_PKGS)
-
 $(GO_PATH)/bin/golangci-lint:
-	@go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
+	@GO111MODULE=off go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
 
 cmd/golangci-lint: $(GO_PATH)/bin/golangci-lint  # go get 'golangci-lint' binary
 
 .PHONY: golangci-lint
-lint/golangci-lint: cmd/golangci-lint  ## Run golangci-lint.
+lint/golangci-lint: cmd/golangci-lint .golangci.yml  ## Run golangci-lint.
 	$(call target)
-	@golangci-lint run --no-config --issues-exit-code=0 $(GOLANGCI_EXCLUDE) --deadline=30m --disable-all $(foreach tool,$(GOLANGCI_LINTERS),--enable=$(tool)) $(GO_PKGS_ABS)
+	@golangci-lint run ./...
 
 
 ## mod
 
 .PHONY: mod/init
 mod/init:
-	$(call target,mod/init)
+	$(call target)
 	@GO111MODULE=on go mod init
+
+.PHONY: mod/goget
+mod/goget:  ## Update module and go.mod.
+	$(call target)
+	@GO111MODULE=on go get -u -m -v -x ./...
 
 .PHONY: mod/tidy
 mod/tidy:
@@ -192,7 +155,7 @@ mod/tidy:
 	@GO111MODULE=on go mod tidy -v
 
 .PHONY: mod/vendor
-mod/vendor: go.mod go.sum
+mod/vendor:
 	$(call target)
 	@GO111MODULE=on go mod vendor -v
 
@@ -211,42 +174,13 @@ mod/clean:
 mod: mod/clean mod/init mod/tidy mod/vendor  ## Updates the vendoring directory via go mod.
 	@sed -i ':a;N;$$!ba;s|go 1\.12\n\n||g' go.mod
 
-
-## dep
-
-$(GO_PATH)/bin/dep:
-	@go get -u github.com/golang/dep/cmd/dep
-
-cmd/dep: $(GO_PATH)/bin/dep
-
-.PHONY: dep/init
-dep/init: cmd/dep  ## Fetch vendor packages via dep ensure.
+.PHONY: mod/install
+mod/install: mod/tidy mod/vendor
 	$(call target)
-	@dep init -v -no-examples
+	@GO111MODULE=off go install -v $(shell go list -f '{{if and (or .GoFiles .CgoFiles) (ne .Name "main")}}{{.ImportPath}}{{end}}' ./vendor/...)
 
-.PHONY: dep/ensure
-dep/ensure: cmd/dep Gopkg.toml  ## Fetch vendor packages via dep ensure.
-	$(call target)
-	@dep ensure -v
-
-.PHONY: dep/ensure/only-vendor
-dep/ensure/only-vendor: cmd/dep Gopkg.toml Gopkg.lock  ## Fetch vendor packages via dep ensure.
-	$(call target)
-	@dep ensure -v -vendor-only
-
-.PHONY: dep/clean
-dep/clean: cmd/dep
-	$(call target)
-	@$(RM) Gopkg.toml Gopkg.lock
-	@$(RM) -r vendor
-
-.PHONY: dep/update
-dep/update: cmd/dep dep/clean
-	$(call target)
-	@dep ensure -v -update
-
-.PHONY: dep/init
-dep: dep/clean dep/update  ## Updates the vendoring directory via dep.
+.PHONY: mod/update
+mod/update: mod/goget mod/tidy mod/vendor mod/install  ## Updates all vendor packages.
 
 
 ## miscellaneous
