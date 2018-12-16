@@ -2,7 +2,7 @@
 
 [![CircleCI][circleci-badge]][circleci] [![codecov.io][codecov-badge]][codecov] [![godoc.org][godoc-badge]][godoc] [![Releases][release-badge]][release] [![GA][ga-badge]][ga]
 
-Command protoc-gen-jsonschema converts .proto to JSON schema.
+Command protoc-gen-jsonschema protoc plugin which converts .proto to JSON schema.
 
 
 <!-- badge links -->
