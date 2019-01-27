@@ -1,7 +1,11 @@
 # ----------------------------------------------------------------------------
 # global
 
+.DEFAULT_GOAL = static
 APP = protoc-gen-jsonschema
+CMD_PREFIX =
+CMD = $(PKG)
+
 PROTOC := protoc
 GO_PATH = $(shell go env GOPATH)
 
@@ -22,11 +26,13 @@ importmaps := \
 	google/rpc/status.proto=${GO_PATH}/src/github.com/gogo/googleapis/google/rpc \
 	google/rpc/code.proto=${GO_PATH}/src/github.com/gogo/googleapis/google/rpc \
 	google/rpc/error_details.proto=${GO_PATH}/src/github.com/gogo/googleapis/google/rpc \
+	/usr/local/include \
+	${GO_PATH}/src \
+	${GO_PATH}/src/github.com/grpc-ecosystem/grpc-gateway/third_party/googleapis
 
 # generate mapping directive with M<proto>:<go pkg>, format for each proto file
 imports_with_spaces := $(foreach import,$(importmaps),-I$(import),)
 imports := $(foreach import,$(importmaps),-I$(import))
-# imports := $(subst $(space),$(empty),$(imports_with_spaces))
 
 jsonschema_prefix := --jsonschema_out=
 jsonschema_options := allow_null_values,disallow_additional_properties,disallow_bigints_as_strings,debug
@@ -63,7 +69,8 @@ test/istio/routing: out static
 
 .PHONY: test/istio/rbac
 test/istio/rbac: out static
-	@PATH=$(CURDIR):$$PATH $(PROTOC) -I${GO_PATH}/src/istio.io/api $(imports) $(jsonschema_plugin) ${GO_PATH}/src/istio.io/api/rbac/v1alpha1/rbac.proto
+	PATH=$(CURDIR):$$PATH $(PROTOC) -I${GO_PATH}/src/istio.io/api $(imports) $(jsonschema_plugin) ${GO_PATH}/src/istio.io/api/rbac/v1alpha1/rbac.proto
+	@cat ./out/RbacConfig.jsonschema | jq . --indent 2
 
 .PHONY: test/istio/authn
 test/istio/authn: out static
@@ -78,9 +85,8 @@ test/istio: test/istio/mcp test/istio/mesh test/istio/mixer test/istio/routing t
 
 # ----------------------------------------------------------------------------
 # include
+
 include hack/make/go.mk
 
 # ----------------------------------------------------------------------------
 # override
-
-.DEFAULT_GOAL = static
