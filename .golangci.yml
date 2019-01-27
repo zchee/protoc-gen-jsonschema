@@ -1,70 +1,37 @@
 run:
-  deadline: 30m
+  concurrency: 4
+  deadline: 5m
   issues-exit-code: 1
   tests: true
-  skip-dirs: []
+  skip-dirs:
+    - api/gate/*
+    - api/mock/*
   skip-files:
-    - ".*\\.pb\\.go$"
-
-output:
-  format: colored-line-number
-  print-issued-lines: true
-  print-linter-name: true
-
-linters:
-  enable-all: false
-  disable-all: false
-  fast: true
-  enable:
-    - deadcode
-    - depguard
-    - errcheck
-    - goconst
-    - gocritic
-    - gofmt
-    - goimports
-    - golint
-    - gosimple
-    - ineffassign
-    - interfacer
-    - maligned
-    - misspell
-    - nakedret
-    - prealloc
-    - scopelint
-    - staticcheck
-    - structcheck
-    - unconvert
-    - unparam
-    - unused
-    - varcheck
-  disable:
-    - dupl
-    - gochecknoglobals
-    - gochecknoinits
-    - gocyclo
-    - gosec
-    - govet
-    - lll
-    - megacheck
-    - typecheck
+    - ".*\\.pb\\.go"
+    - ".*\\.gen\\.go"
 
 linters-settings:
   depguard:
     list-type: blacklist
     include-go-root: false
+    packages:
+      - github.com/davecgh/go-spew/spew
+  # dupl:
+  #   threshold: 100
   errcheck:
     check-type-assertions: true
     check-blank: true
   goconst:
     min-len: 3
     min-occurrences: 3
+  # gocyclo:
+  #   min-complexity: 10
   gofmt:
     simplify: true
   goimports:
-    local-prefixes: github.com/zchee/protoc-gen-jsonschema
+    local-prefixes: github.com/zchee/spinctl/
   golint:
-    min-confidence: 0.8
+    min-confidence: 0.3
   govet:
     check-shadowing: false
   maligned:
@@ -83,8 +50,57 @@ linters-settings:
   unused:
     check-exported: false
 
+linters:
+  enable:
+    - deadcode
+    - depguard
+    - errcheck
+    - goconst
+    - gocritic
+    - gofmt
+    - goimports
+    - golint
+    - gosimple
+    - govet
+    - ineffassign
+    - interfacer
+    - maligned
+    - misspell
+    - nakedret
+    - prealloc
+    - scopelint
+    - staticcheck
+    - structcheck
+    - unconvert
+    - unparam
+    - unused
+    - varcheck
+  enable-all: false
+  disable:
+    - dupl
+    - gochecknoglobals
+    - gochecknoinits
+    - gocyclo
+    - gosec
+    - lll
+    - megacheck
+    - typecheck
+  disable-all: false
+  presets:
+    - bugs
+    - unused
+  fast: false
+
 issues:
   exclude:
     - 'flags\.Parse'
     - 'log\.Sync'
+    - '.*\.Shutdown'
+    - '.*\.Close'
+    - 'encoder\.Encode'
   exclude-use-default: false
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
