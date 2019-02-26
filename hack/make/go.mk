@@ -89,14 +89,14 @@ endef
 .PHONY: $(APP)
 $(APP): VERSION.txt
 	$(call target)
-	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GO_OS) GOARCH=$(GO_ARCH) go build -v $(strip $(GO_FLAGS)) -o $(APP) $(CMD)
+	@CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GO_OS) GOARCH=$(GO_ARCH) go build -v $(strip $(GO_FLAGS)) -o $(APP) $(CMD)
 
 .PHONY: build
 build: $(APP)  ## Builds a dynamic executable or package.
 
 .PHONY: static
 static: GO_LDFLAGS=${GO_LDFLAGS_STATIC}
-static: GO_FLAGS+=-a -installsuffix ${GO_INSTALLSUFFIX_STATIC}
+static: GO_FLAGS+=-installsuffix ${GO_INSTALLSUFFIX_STATIC}
 static: GO_BUILDTAGS+=${GO_BUILDTAGS_STATIC}
 static: $(APP)  ## Builds a static executable or package.
 
