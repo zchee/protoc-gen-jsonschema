@@ -1,33 +1,6 @@
-// Go support for Protocol Buffers - Google's data interchange format
-//
-// Copyright 2010 The Go Authors.  All rights reserved.
-// https://github.com/golang/protobuf
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Copyright 2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 
 /*
 Package proto converts data structures to and from the wire format of
@@ -264,13 +237,18 @@ To create and play with a Test object:
 package proto
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
 	"sort"
 	"strconv"
 	"sync"
+
+	// Add a bogus dependency on the v2 API to ensure the Go toolchain does not
+	// remove our dependency from the go.mod file.
+	_ "github.com/golang/protobuf/v2/reflect/protoreflect"
+
+	"github.com/golang/protobuf/protoapi"
 )
 
 // RequiredNotSetError is an error type returned by either Marshal or Unmarshal.
@@ -335,31 +313,7 @@ func (nf *nonFatal) Merge(err error) (ok bool) {
 }
 
 // Message is implemented by generated protocol buffer messages.
-type Message interface {
-	Reset()
-	String() string
-	ProtoMessage()
-}
-
-// Stats records allocation details about the protocol buffer encoders
-// and decoders.  Useful for tuning the library itself.
-type Stats struct {
-	Emalloc uint64 // mallocs in encode
-	Dmalloc uint64 // mallocs in decode
-	Encode  uint64 // number of encodes
-	Decode  uint64 // number of decodes
-	Chit    uint64 // number of cache hits
-	Cmiss   uint64 // number of cache misses
-	Size    uint64 // number of sizes
-}
-
-// Set to true to enable stats collection.
-const collectStats = false
-
-var stats Stats
-
-// GetStats returns a copy of the global Stats structure.
-func GetStats() Stats { return stats }
+type Message = protoapi.Message
 
 // A Buffer is a buffer manager for marshaling and unmarshaling
 // protocol buffers.  It may be reused between invocations to
@@ -478,43 +432,6 @@ func Uint64(v uint64) *uint64 {
 // to store v and returns a pointer to it.
 func String(v string) *string {
 	return &v
-}
-
-// EnumName is a helper function to simplify printing protocol buffer enums
-// by name.  Given an enum map and a value, it returns a useful string.
-func EnumName(m map[int32]string, v int32) string {
-	s, ok := m[v]
-	if ok {
-		return s
-	}
-	return strconv.Itoa(int(v))
-}
-
-// UnmarshalJSONEnum is a helper function to simplify recovering enum int values
-// from their JSON-encoded representation. Given a map from the enum's symbolic
-// names to its int values, and a byte buffer containing the JSON-encoded
-// value, it returns an int32 that can be cast to the enum type by the caller.
-//
-// The function can deal with both JSON representations, numeric and symbolic.
-func UnmarshalJSONEnum(m map[string]int32, data []byte, enumName string) (int32, error) {
-	if data[0] == '"' {
-		// New style: enums are strings.
-		var repr string
-		if err := json.Unmarshal(data, &repr); err != nil {
-			return -1, err
-		}
-		val, ok := m[repr]
-		if !ok {
-			return 0, fmt.Errorf("unrecognized enum %s value %q", enumName, repr)
-		}
-		return val, nil
-	}
-	// Old style: enums are ints.
-	var val int32
-	if err := json.Unmarshal(data, &val); err != nil {
-		return 0, fmt.Errorf("cannot unmarshal %#q into enum %s", data, enumName)
-	}
-	return val, nil
 }
 
 // DebugPrint dumps the encoded data in b in a debugging format with a header
@@ -960,13 +877,19 @@ func isProto3Zero(v reflect.Value) bool {
 	return false
 }
 
-// ProtoPackageIsVersion2 is referenced from generated protocol buffer files
-// to assert that that code is compatible with this version of the proto package.
-const ProtoPackageIsVersion2 = true
+const (
+	// ProtoPackageIsVersion3 is referenced from generated protocol buffer files
+	// to assert that that code is compatible with this version of the proto package.
+	ProtoPackageIsVersion3 = true
 
-// ProtoPackageIsVersion1 is referenced from generated protocol buffer files
-// to assert that that code is compatible with this version of the proto package.
-const ProtoPackageIsVersion1 = true
+	// ProtoPackageIsVersion2 is referenced from generated protocol buffer files
+	// to assert that that code is compatible with this version of the proto package.
+	ProtoPackageIsVersion2 = true
+
+	// ProtoPackageIsVersion1 is referenced from generated protocol buffer files
+	// to assert that that code is compatible with this version of the proto package.
+	ProtoPackageIsVersion1 = true
+)
 
 // InternalMessageInfo is a type used internally by generated .pb.go files.
 // This type is not intended to be used by non-generated code.

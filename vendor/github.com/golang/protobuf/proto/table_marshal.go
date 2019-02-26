@@ -1,33 +1,6 @@
-// Go support for Protocol Buffers - Google's data interchange format
-//
-// Copyright 2016 The Go Authors.  All rights reserved.
-// https://github.com/golang/protobuf
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 
 package proto
 
@@ -42,6 +15,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"github.com/golang/protobuf/protoapi"
+	"github.com/golang/protobuf/v2/reflect/protoreflect"
 )
 
 // a sizer takes a pointer to a field and the size of its tag, computes the size of
@@ -87,6 +63,7 @@ type marshalElemInfo struct {
 	sizer     sizer
 	marshaler marshaler
 	isptr     bool // elem is pointer typed, thus interface of this type is a direct interface (extension only)
+	deref     bool // dereference the pointer before operating on it; implies isptr
 }
 
 var (
@@ -281,7 +258,8 @@ func (u *marshalInfo) marshal(b []byte, ptr pointer, deterministic bool) ([]byte
 			}
 			if err == errInvalidUTF8 {
 				if errLater == nil {
-					fullName := revProtoTypes[reflect.PtrTo(u.typ)] + "." + f.name
+					mz := reflect.Zero(reflect.PtrTo(u.typ)).Interface().(Message)
+					fullName := protoapi.MessageName(mz) + "." + f.name
 					errLater = &invalidUTF8Error{fullName}
 				}
 				continue
@@ -320,8 +298,11 @@ func (u *marshalInfo) computeMarshalInfo() {
 
 	// get oneof implementers
 	var oneofImplementers []interface{}
-	if m, ok := reflect.Zero(reflect.PtrTo(t)).Interface().(oneofMessage); ok {
+	switch m := reflect.Zero(reflect.PtrTo(t)).Interface().(type) {
+	case oneofFuncsIface:
 		_, _, _, oneofImplementers = m.XXX_OneofFuncs()
+	case oneofWrappersIface:
+		oneofImplementers = m.XXX_OneofWrappers()
 	}
 
 	n := t.NumField()
@@ -407,13 +388,22 @@ func (u *marshalInfo) getExtElemInfo(desc *ExtensionDesc) *marshalElemInfo {
 		panic("tag is not an integer")
 	}
 	wt := wiretype(tags[0])
+	if t.Kind() == reflect.Ptr && t.Elem().Kind() != reflect.Struct {
+		t = t.Elem()
+	}
 	sizer, marshaler := typeMarshaler(t, tags, false, false)
+	var deref bool
+	if t.Kind() == reflect.Slice && t.Elem().Kind() != reflect.Uint8 {
+		t = reflect.PtrTo(t)
+		deref = true
+	}
 	e = &marshalElemInfo{
 		wiretag:   uint64(tag)<<3 | wt,
 		tagsize:   SizeVarint(uint64(tag) << 3),
 		sizer:     sizer,
 		marshaler: marshaler,
 		isptr:     t.Kind() == reflect.Ptr,
+		deref:     deref,
 	}
 
 	// update cache
@@ -448,7 +438,7 @@ func (fi *marshalFieldInfo) computeMarshalFieldInfo(f *reflect.StructField) {
 
 func (fi *marshalFieldInfo) computeOneofFieldInfo(f *reflect.StructField, oneofImplementers []interface{}) {
 	fi.field = toField(f)
-	fi.wiretag = 1<<31 - 1 // Use a large tag number, make oneofs sorted at the end. This tag will not appear on the wire.
+	fi.wiretag = math.MaxInt32 // Use a large tag number, make oneofs sorted at the end. This tag will not appear on the wire.
 	fi.isPointer = true
 	fi.sizer, fi.marshaler = makeOneOfMarshaler(fi, f)
 	fi.oneofElems = make(map[reflect.Type]*marshalElemInfo)
@@ -474,10 +464,6 @@ func (fi *marshalFieldInfo) computeOneofFieldInfo(f *reflect.StructField, oneofI
 			marshaler: marshaler,
 		}
 	}
-}
-
-type oneofMessage interface {
-	XXX_OneofFuncs() (func(Message, *Buffer) error, func(Message, int, int, *Buffer) (bool, error), func(Message) int, []interface{})
 }
 
 // wiretype returns the wire encoding of the type.
@@ -2310,8 +2296,8 @@ func makeMapMarshaler(f *reflect.StructField) (sizer, marshaler) {
 			for _, k := range m.MapKeys() {
 				ki := k.Interface()
 				vi := m.MapIndex(k).Interface()
-				kaddr := toAddrPointer(&ki, false)             // pointer to key
-				vaddr := toAddrPointer(&vi, valIsPtr)          // pointer to value
+				kaddr := toAddrPointer(&ki, false, false)      // pointer to key
+				vaddr := toAddrPointer(&vi, valIsPtr, false)   // pointer to value
 				siz := keySizer(kaddr, 1) + valSizer(vaddr, 1) // tag of key = 1 (size=1), tag of val = 2 (size=1)
 				n += siz + SizeVarint(uint64(siz)) + tagsize
 			}
@@ -2329,8 +2315,8 @@ func makeMapMarshaler(f *reflect.StructField) (sizer, marshaler) {
 			for _, k := range keys {
 				ki := k.Interface()
 				vi := m.MapIndex(k).Interface()
-				kaddr := toAddrPointer(&ki, false)    // pointer to key
-				vaddr := toAddrPointer(&vi, valIsPtr) // pointer to value
+				kaddr := toAddrPointer(&ki, false, false)    // pointer to key
+				vaddr := toAddrPointer(&vi, valIsPtr, false) // pointer to value
 				b = appendVarint(b, tag)
 				siz := keySizer(kaddr, 1) + valCachedSizer(vaddr, 1) // tag of key = 1 (size=1), tag of val = 2 (size=1)
 				b = appendVarint(b, uint64(siz))
@@ -2380,82 +2366,86 @@ func makeOneOfMarshaler(fi *marshalFieldInfo, f *reflect.StructField) (sizer, ma
 
 // sizeExtensions computes the size of encoded data for a XXX_InternalExtensions field.
 func (u *marshalInfo) sizeExtensions(ext *XXX_InternalExtensions) int {
-	m, mu := ext.extensionsRead()
-	if m == nil {
+	m := protoapi.ExtensionFieldsOf(ext)
+	if !m.HasInit() {
 		return 0
 	}
-	mu.Lock()
+	m.Lock()
+	defer m.Unlock()
 
 	n := 0
-	for _, e := range m {
-		if e.value == nil || e.desc == nil {
+	m.Range(func(_ protoreflect.FieldNumber, e Extension) bool {
+		if e.Value == nil || e.Desc == nil {
 			// Extension is only in its encoded form.
-			n += len(e.enc)
-			continue
+			n += len(e.Raw)
+			return true
 		}
 
 		// We don't skip extensions that have an encoded form set,
 		// because the extension value may have been mutated after
 		// the last time this function was called.
-		ei := u.getExtElemInfo(e.desc)
-		v := e.value
-		p := toAddrPointer(&v, ei.isptr)
+		ei := u.getExtElemInfo(e.Desc)
+		v := e.Value
+		p := toAddrPointer(&v, ei.isptr, ei.deref)
 		n += ei.sizer(p, ei.tagsize)
-	}
-	mu.Unlock()
+		return true
+	})
 	return n
 }
 
 // appendExtensions marshals a XXX_InternalExtensions field to the end of byte slice b.
 func (u *marshalInfo) appendExtensions(b []byte, ext *XXX_InternalExtensions, deterministic bool) ([]byte, error) {
-	m, mu := ext.extensionsRead()
-	if m == nil {
+	m := protoapi.ExtensionFieldsOf(ext)
+	if !m.HasInit() {
 		return b, nil
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
 
 	var err error
 	var nerr nonFatal
 
 	// Fast-path for common cases: zero or one extensions.
 	// Don't bother sorting the keys.
-	if len(m) <= 1 {
-		for _, e := range m {
-			if e.value == nil || e.desc == nil {
+	if m.Len() <= 1 {
+		m.Range(func(_ protoreflect.FieldNumber, e Extension) bool {
+			if e.Value == nil || e.Desc == nil {
 				// Extension is only in its encoded form.
-				b = append(b, e.enc...)
-				continue
+				b = append(b, e.Raw...)
+				return true
 			}
 
 			// We don't skip extensions that have an encoded form set,
 			// because the extension value may have been mutated after
 			// the last time this function was called.
 
-			ei := u.getExtElemInfo(e.desc)
-			v := e.value
-			p := toAddrPointer(&v, ei.isptr)
+			ei := u.getExtElemInfo(e.Desc)
+			v := e.Value
+			p := toAddrPointer(&v, ei.isptr, ei.deref)
 			b, err = ei.marshaler(b, p, ei.wiretag, deterministic)
 			if !nerr.Merge(err) {
-				return b, err
+				return false
 			}
-		}
-		return b, nerr.E
+			err = nerr.E
+			return true
+		})
+		return b, err
 	}
 
 	// Sort the keys to provide a deterministic encoding.
 	// Not sure this is required, but the old code does it.
-	keys := make([]int, 0, len(m))
-	for k := range m {
+	keys := make([]int, 0, m.Len())
+	m.Range(func(k protoreflect.FieldNumber, _ Extension) bool {
 		keys = append(keys, int(k))
-	}
+		return true
+	})
 	sort.Ints(keys)
 
 	for _, k := range keys {
-		e := m[int32(k)]
-		if e.value == nil || e.desc == nil {
+		e := m.Get(protoreflect.FieldNumber(k))
+		if e.Value == nil || e.Desc == nil {
 			// Extension is only in its encoded form.
-			b = append(b, e.enc...)
+			b = append(b, e.Raw...)
 			continue
 		}
 
@@ -2463,9 +2453,9 @@ func (u *marshalInfo) appendExtensions(b []byte, ext *XXX_InternalExtensions, de
 		// because the extension value may have been mutated after
 		// the last time this function was called.
 
-		ei := u.getExtElemInfo(e.desc)
-		v := e.value
-		p := toAddrPointer(&v, ei.isptr)
+		ei := u.getExtElemInfo(e.Desc)
+		v := e.Value
+		p := toAddrPointer(&v, ei.isptr, ei.deref)
 		b, err = ei.marshaler(b, p, ei.wiretag, deterministic)
 		if !nerr.Merge(err) {
 			return b, err
@@ -2485,100 +2475,104 @@ func (u *marshalInfo) appendExtensions(b []byte, ext *XXX_InternalExtensions, de
 // sizeMessageSet computes the size of encoded data for a XXX_InternalExtensions field
 // in message set format (above).
 func (u *marshalInfo) sizeMessageSet(ext *XXX_InternalExtensions) int {
-	m, mu := ext.extensionsRead()
-	if m == nil {
+	m := protoapi.ExtensionFieldsOf(ext)
+	if !m.HasInit() {
 		return 0
 	}
-	mu.Lock()
+	m.Lock()
+	defer m.Unlock()
 
 	n := 0
-	for id, e := range m {
+	m.Range(func(id protoreflect.FieldNumber, e Extension) bool {
 		n += 2                          // start group, end group. tag = 1 (size=1)
 		n += SizeVarint(uint64(id)) + 1 // type_id, tag = 2 (size=1)
 
-		if e.value == nil || e.desc == nil {
+		if e.Value == nil || e.Desc == nil {
 			// Extension is only in its encoded form.
-			msgWithLen := skipVarint(e.enc) // skip old tag, but leave the length varint
+			msgWithLen := skipVarint(e.Raw) // skip old tag, but leave the length varint
 			siz := len(msgWithLen)
 			n += siz + 1 // message, tag = 3 (size=1)
-			continue
+			return true
 		}
 
 		// We don't skip extensions that have an encoded form set,
 		// because the extension value may have been mutated after
 		// the last time this function was called.
 
-		ei := u.getExtElemInfo(e.desc)
-		v := e.value
-		p := toAddrPointer(&v, ei.isptr)
+		ei := u.getExtElemInfo(e.Desc)
+		v := e.Value
+		p := toAddrPointer(&v, ei.isptr, ei.deref)
 		n += ei.sizer(p, 1) // message, tag = 3 (size=1)
-	}
-	mu.Unlock()
+		return true
+	})
 	return n
 }
 
 // appendMessageSet marshals a XXX_InternalExtensions field in message set format (above)
 // to the end of byte slice b.
 func (u *marshalInfo) appendMessageSet(b []byte, ext *XXX_InternalExtensions, deterministic bool) ([]byte, error) {
-	m, mu := ext.extensionsRead()
-	if m == nil {
+	m := protoapi.ExtensionFieldsOf(ext)
+	if !m.HasInit() {
 		return b, nil
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	m.Lock()
+	defer m.Unlock()
 
 	var err error
 	var nerr nonFatal
 
 	// Fast-path for common cases: zero or one extensions.
 	// Don't bother sorting the keys.
-	if len(m) <= 1 {
-		for id, e := range m {
+	if m.Len() <= 1 {
+		m.Range(func(id protoreflect.FieldNumber, e Extension) bool {
 			b = append(b, 1<<3|WireStartGroup)
 			b = append(b, 2<<3|WireVarint)
 			b = appendVarint(b, uint64(id))
 
-			if e.value == nil || e.desc == nil {
+			if e.Value == nil || e.Desc == nil {
 				// Extension is only in its encoded form.
-				msgWithLen := skipVarint(e.enc) // skip old tag, but leave the length varint
+				msgWithLen := skipVarint(e.Raw) // skip old tag, but leave the length varint
 				b = append(b, 3<<3|WireBytes)
 				b = append(b, msgWithLen...)
 				b = append(b, 1<<3|WireEndGroup)
-				continue
+				return true
 			}
 
 			// We don't skip extensions that have an encoded form set,
 			// because the extension value may have been mutated after
 			// the last time this function was called.
 
-			ei := u.getExtElemInfo(e.desc)
-			v := e.value
-			p := toAddrPointer(&v, ei.isptr)
+			ei := u.getExtElemInfo(e.Desc)
+			v := e.Value
+			p := toAddrPointer(&v, ei.isptr, ei.deref)
 			b, err = ei.marshaler(b, p, 3<<3|WireBytes, deterministic)
 			if !nerr.Merge(err) {
-				return b, err
+				return false
 			}
 			b = append(b, 1<<3|WireEndGroup)
-		}
-		return b, nerr.E
+			err = nerr.E
+			return true
+		})
+		return b, err
 	}
 
 	// Sort the keys to provide a deterministic encoding.
-	keys := make([]int, 0, len(m))
-	for k := range m {
+	keys := make([]int, 0, m.Len())
+	m.Range(func(k protoreflect.FieldNumber, _ Extension) bool {
 		keys = append(keys, int(k))
-	}
+		return true
+	})
 	sort.Ints(keys)
 
 	for _, id := range keys {
-		e := m[int32(id)]
+		e := m.Get(protoreflect.FieldNumber(id))
 		b = append(b, 1<<3|WireStartGroup)
 		b = append(b, 2<<3|WireVarint)
 		b = appendVarint(b, uint64(id))
 
-		if e.value == nil || e.desc == nil {
+		if e.Value == nil || e.Desc == nil {
 			// Extension is only in its encoded form.
-			msgWithLen := skipVarint(e.enc) // skip old tag, but leave the length varint
+			msgWithLen := skipVarint(e.Raw) // skip old tag, but leave the length varint
 			b = append(b, 3<<3|WireBytes)
 			b = append(b, msgWithLen...)
 			b = append(b, 1<<3|WireEndGroup)
@@ -2589,9 +2583,9 @@ func (u *marshalInfo) appendMessageSet(b []byte, ext *XXX_InternalExtensions, de
 		// because the extension value may have been mutated after
 		// the last time this function was called.
 
-		ei := u.getExtElemInfo(e.desc)
-		v := e.value
-		p := toAddrPointer(&v, ei.isptr)
+		ei := u.getExtElemInfo(e.Desc)
+		v := e.Value
+		p := toAddrPointer(&v, ei.isptr, ei.deref)
 		b, err = ei.marshaler(b, p, 3<<3|WireBytes, deterministic)
 		b = append(b, 1<<3|WireEndGroup)
 		if !nerr.Merge(err) {
@@ -2609,9 +2603,9 @@ func (u *marshalInfo) sizeV1Extensions(m map[int32]Extension) int {
 
 	n := 0
 	for _, e := range m {
-		if e.value == nil || e.desc == nil {
+		if e.Value == nil || e.Desc == nil {
 			// Extension is only in its encoded form.
-			n += len(e.enc)
+			n += len(e.Raw)
 			continue
 		}
 
@@ -2619,9 +2613,9 @@ func (u *marshalInfo) sizeV1Extensions(m map[int32]Extension) int {
 		// because the extension value may have been mutated after
 		// the last time this function was called.
 
-		ei := u.getExtElemInfo(e.desc)
-		v := e.value
-		p := toAddrPointer(&v, ei.isptr)
+		ei := u.getExtElemInfo(e.Desc)
+		v := e.Value
+		p := toAddrPointer(&v, ei.isptr, ei.deref)
 		n += ei.sizer(p, ei.tagsize)
 	}
 	return n
@@ -2644,9 +2638,9 @@ func (u *marshalInfo) appendV1Extensions(b []byte, m map[int32]Extension, determ
 	var nerr nonFatal
 	for _, k := range keys {
 		e := m[int32(k)]
-		if e.value == nil || e.desc == nil {
+		if e.Value == nil || e.Desc == nil {
 			// Extension is only in its encoded form.
-			b = append(b, e.enc...)
+			b = append(b, e.Raw...)
 			continue
 		}
 
@@ -2654,9 +2648,9 @@ func (u *marshalInfo) appendV1Extensions(b []byte, m map[int32]Extension, determ
 		// because the extension value may have been mutated after
 		// the last time this function was called.
 
-		ei := u.getExtElemInfo(e.desc)
-		v := e.value
-		p := toAddrPointer(&v, ei.isptr)
+		ei := u.getExtElemInfo(e.Desc)
+		v := e.Value
+		p := toAddrPointer(&v, ei.isptr, ei.deref)
 		b, err = ei.marshaler(b, p, ei.wiretag, deterministic)
 		if !nerr.Merge(err) {
 			return b, err

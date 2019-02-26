@@ -1,33 +1,6 @@
-// Go support for Protocol Buffers - Google's data interchange format
-//
-// Copyright 2016 The Go Authors.  All rights reserved.
-// https://github.com/golang/protobuf
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Copyright 2016 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 
 package proto
 
@@ -42,6 +15,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"unicode/utf8"
+
+	"github.com/golang/protobuf/protoapi"
+	"github.com/golang/protobuf/v2/reflect/protoreflect"
 )
 
 // Unmarshal is the entry point from the generated .pb.go files.
@@ -136,7 +112,7 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 		u.computeUnmarshalInfo()
 	}
 	if u.isMessageSet {
-		return UnmarshalMessageSet(b, m.offset(u.extensions).toExtensions())
+		return unmarshalMessageSet(b, m.offset(u.extensions).toExtensions())
 	}
 	var reqMask uint64 // bitmask of required fields we've seen.
 	var errLater error
@@ -187,7 +163,8 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 			if err != errInternalBadWireType {
 				if err == errInvalidUTF8 {
 					if errLater == nil {
-						fullName := revProtoTypes[reflect.PtrTo(u.typ)] + "." + f.name
+						mz := reflect.Zero(reflect.PtrTo(u.typ)).Interface().(Message)
+						fullName := protoapi.MessageName(mz) + "." + f.name
 						errLater = &invalidUTF8Error{fullName}
 					}
 					continue
@@ -210,26 +187,22 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 		// Keep unrecognized data around.
 		// maybe in extensions, maybe in the unrecognized field.
 		z := m.offset(u.unrecognized).toBytes()
-		var emap map[int32]Extension
+		var emap protoapi.ExtensionFields
 		var e Extension
 		for _, r := range u.extensionRanges {
 			if uint64(r.Start) <= tag && tag <= uint64(r.End) {
 				if u.extensions.IsValid() {
 					mp := m.offset(u.extensions).toExtensions()
-					emap = mp.extensionsWrite()
-					e = emap[int32(tag)]
-					z = &e.enc
+					emap = protoapi.ExtensionFieldsOf(mp)
+					e = emap.Get(protoreflect.FieldNumber(tag))
+					z = &e.Raw
 					break
 				}
 				if u.oldExtensions.IsValid() {
 					p := m.offset(u.oldExtensions).toOldExtensions()
-					emap = *p
-					if emap == nil {
-						emap = map[int32]Extension{}
-						*p = emap
-					}
-					e = emap[int32(tag)]
-					z = &e.enc
+					emap = protoapi.ExtensionFieldsOf(p)
+					e = emap.Get(protoreflect.FieldNumber(tag))
+					z = &e.Raw
 					break
 				}
 				panic("no extensions field available")
@@ -247,7 +220,7 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 		*z = append(*z, b0[:len(b0)-len(b)]...)
 
 		if emap != nil {
-			emap[int32(tag)] = e
+			emap.Set(protoreflect.FieldNumber(tag), e)
 		}
 	}
 	if reqMask != u.reqMask && errLater == nil {
@@ -362,46 +335,48 @@ func (u *unmarshalInfo) computeUnmarshalInfo() {
 	}
 
 	// Find any types associated with oneof fields.
-	// TODO: XXX_OneofFuncs returns more info than we need.  Get rid of some of it?
-	fn := reflect.Zero(reflect.PtrTo(t)).MethodByName("XXX_OneofFuncs")
-	if fn.IsValid() {
-		res := fn.Call(nil)[3] // last return value from XXX_OneofFuncs: []interface{}
-		for i := res.Len() - 1; i >= 0; i-- {
-			v := res.Index(i)                             // interface{}
-			tptr := reflect.ValueOf(v.Interface()).Type() // *Msg_X
-			typ := tptr.Elem()                            // Msg_X
+	var oneofImplementers []interface{}
+	switch m := reflect.Zero(reflect.PtrTo(t)).Interface().(type) {
+	case oneofFuncsIface:
+		_, _, _, oneofImplementers = m.XXX_OneofFuncs()
+	case oneofWrappersIface:
+		oneofImplementers = m.XXX_OneofWrappers()
+	}
+	for _, v := range oneofImplementers {
+		tptr := reflect.TypeOf(v) // *Msg_X
+		typ := tptr.Elem()        // Msg_X
 
-			f := typ.Field(0) // oneof implementers have one field
-			baseUnmarshal := fieldUnmarshaler(&f)
-			tags := strings.Split(f.Tag.Get("protobuf"), ",")
-			fieldNum, err := strconv.Atoi(tags[1])
-			if err != nil {
-				panic("protobuf tag field not an integer: " + tags[1])
-			}
-			var name string
-			for _, tag := range tags {
-				if strings.HasPrefix(tag, "name=") {
-					name = strings.TrimPrefix(tag, "name=")
-					break
-				}
-			}
-
-			// Find the oneof field that this struct implements.
-			// Might take O(n^2) to process all of the oneofs, but who cares.
-			for _, of := range oneofFields {
-				if tptr.Implements(of.ityp) {
-					// We have found the corresponding interface for this struct.
-					// That lets us know where this struct should be stored
-					// when we encounter it during unmarshaling.
-					unmarshal := makeUnmarshalOneof(typ, of.ityp, baseUnmarshal)
-					u.setTag(fieldNum, of.field, unmarshal, 0, name)
-				}
+		f := typ.Field(0) // oneof implementers have one field
+		baseUnmarshal := fieldUnmarshaler(&f)
+		tags := strings.Split(f.Tag.Get("protobuf"), ",")
+		fieldNum, err := strconv.Atoi(tags[1])
+		if err != nil {
+			panic("protobuf tag field not an integer: " + tags[1])
+		}
+		var name string
+		for _, tag := range tags {
+			if strings.HasPrefix(tag, "name=") {
+				name = strings.TrimPrefix(tag, "name=")
+				break
 			}
 		}
+
+		// Find the oneof field that this struct implements.
+		// Might take O(n^2) to process all of the oneofs, but who cares.
+		for _, of := range oneofFields {
+			if tptr.Implements(of.ityp) {
+				// We have found the corresponding interface for this struct.
+				// That lets us know where this struct should be stored
+				// when we encounter it during unmarshaling.
+				unmarshal := makeUnmarshalOneof(typ, of.ityp, baseUnmarshal)
+				u.setTag(fieldNum, of.field, unmarshal, 0, name)
+			}
+		}
+
 	}
 
 	// Get extension ranges, if any.
-	fn = reflect.Zero(reflect.PtrTo(t)).MethodByName("ExtensionRangeArray")
+	fn := reflect.Zero(reflect.PtrTo(t)).MethodByName("ExtensionRangeArray")
 	if fn.IsValid() {
 		if !u.extensions.IsValid() && !u.oldExtensions.IsValid() {
 			panic("a message with extensions, but no extensions field in " + t.Name())
@@ -1948,7 +1923,7 @@ func encodeVarint(b []byte, x uint64) []byte {
 // If there is an error, it returns 0,0.
 func decodeVarint(b []byte) (uint64, int) {
 	var x, y uint64
-	if len(b) <= 0 {
+	if len(b) == 0 {
 		goto bad
 	}
 	x = uint64(b[0])

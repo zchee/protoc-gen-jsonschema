@@ -1,33 +1,6 @@
-// Go support for Protocol Buffers - Google's data interchange format
-//
-// Copyright 2010 The Go Authors.  All rights reserved.
-// https://github.com/golang/protobuf
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Copyright 2010 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 
 package proto
 
@@ -37,7 +10,6 @@ package proto
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"reflect"
 	"sort"
@@ -334,9 +306,6 @@ func GetProperties(t reflect.Type) *StructProperties {
 	sprop, ok := propertiesMap[t]
 	propertiesMu.RUnlock()
 	if ok {
-		if collectStats {
-			stats.Chit++
-		}
 		return sprop
 	}
 
@@ -346,16 +315,19 @@ func GetProperties(t reflect.Type) *StructProperties {
 	return sprop
 }
 
+type (
+	oneofFuncsIface interface {
+		XXX_OneofFuncs() (func(Message, *Buffer) error, func(Message, int, int, *Buffer) (bool, error), func(Message) int, []interface{})
+	}
+	oneofWrappersIface interface {
+		XXX_OneofWrappers() []interface{}
+	}
+)
+
 // getPropertiesLocked requires that propertiesMu is held.
 func getPropertiesLocked(t reflect.Type) *StructProperties {
 	if prop, ok := propertiesMap[t]; ok {
-		if collectStats {
-			stats.Chit++
-		}
 		return prop
-	}
-	if collectStats {
-		stats.Cmiss++
 	}
 
 	prop := new(StructProperties)
@@ -391,13 +363,14 @@ func getPropertiesLocked(t reflect.Type) *StructProperties {
 	// Re-order prop.order.
 	sort.Sort(prop)
 
-	type oneofMessage interface {
-		XXX_OneofFuncs() (func(Message, *Buffer) error, func(Message, int, int, *Buffer) (bool, error), func(Message) int, []interface{})
+	var oots []interface{}
+	switch m := reflect.Zero(reflect.PtrTo(t)).Interface().(type) {
+	case oneofFuncsIface:
+		_, _, _, oots = m.XXX_OneofFuncs()
+	case oneofWrappersIface:
+		oots = m.XXX_OneofWrappers()
 	}
-	if om, ok := reflect.Zero(reflect.PtrTo(t)).Interface().(oneofMessage); ok {
-		var oots []interface{}
-		_, _, _, oots = om.XXX_OneofFuncs()
-
+	if len(oots) > 0 {
 		// Interpret oneof metadata.
 		prop.OneofTypes = make(map[string]*OneofProperties)
 		for _, oot := range oots {
@@ -445,100 +418,3 @@ func getPropertiesLocked(t reflect.Type) *StructProperties {
 
 	return prop
 }
-
-// A global registry of enum types.
-// The generated code will register the generated maps by calling RegisterEnum.
-
-var enumValueMaps = make(map[string]map[string]int32)
-
-// RegisterEnum is called from the generated code to install the enum descriptor
-// maps into the global table to aid parsing text format protocol buffers.
-func RegisterEnum(typeName string, unusedNameMap map[int32]string, valueMap map[string]int32) {
-	if _, ok := enumValueMaps[typeName]; ok {
-		panic("proto: duplicate enum registered: " + typeName)
-	}
-	enumValueMaps[typeName] = valueMap
-}
-
-// EnumValueMap returns the mapping from names to integers of the
-// enum type enumType, or a nil if not found.
-func EnumValueMap(enumType string) map[string]int32 {
-	return enumValueMaps[enumType]
-}
-
-// A registry of all linked message types.
-// The string is a fully-qualified proto name ("pkg.Message").
-var (
-	protoTypedNils = make(map[string]Message)      // a map from proto names to typed nil pointers
-	protoMapTypes  = make(map[string]reflect.Type) // a map from proto names to map types
-	revProtoTypes  = make(map[reflect.Type]string)
-)
-
-// RegisterType is called from generated code and maps from the fully qualified
-// proto name to the type (pointer to struct) of the protocol buffer.
-func RegisterType(x Message, name string) {
-	if _, ok := protoTypedNils[name]; ok {
-		// TODO: Some day, make this a panic.
-		log.Printf("proto: duplicate proto type registered: %s", name)
-		return
-	}
-	t := reflect.TypeOf(x)
-	if v := reflect.ValueOf(x); v.Kind() == reflect.Ptr && v.Pointer() == 0 {
-		// Generated code always calls RegisterType with nil x.
-		// This check is just for extra safety.
-		protoTypedNils[name] = x
-	} else {
-		protoTypedNils[name] = reflect.Zero(t).Interface().(Message)
-	}
-	revProtoTypes[t] = name
-}
-
-// RegisterMapType is called from generated code and maps from the fully qualified
-// proto name to the native map type of the proto map definition.
-func RegisterMapType(x interface{}, name string) {
-	if reflect.TypeOf(x).Kind() != reflect.Map {
-		panic(fmt.Sprintf("RegisterMapType(%T, %q); want map", x, name))
-	}
-	if _, ok := protoMapTypes[name]; ok {
-		log.Printf("proto: duplicate proto type registered: %s", name)
-		return
-	}
-	t := reflect.TypeOf(x)
-	protoMapTypes[name] = t
-	revProtoTypes[t] = name
-}
-
-// MessageName returns the fully-qualified proto name for the given message type.
-func MessageName(x Message) string {
-	type xname interface {
-		XXX_MessageName() string
-	}
-	if m, ok := x.(xname); ok {
-		return m.XXX_MessageName()
-	}
-	return revProtoTypes[reflect.TypeOf(x)]
-}
-
-// MessageType returns the message type (pointer to struct) for a named message.
-// The type is not guaranteed to implement proto.Message if the name refers to a
-// map entry.
-func MessageType(name string) reflect.Type {
-	if t, ok := protoTypedNils[name]; ok {
-		return reflect.TypeOf(t)
-	}
-	return protoMapTypes[name]
-}
-
-// A registry of all linked proto files.
-var (
-	protoFiles = make(map[string][]byte) // file name => fileDescriptor
-)
-
-// RegisterFile is called from generated code and maps from the
-// full file name of a .proto file to its compressed FileDescriptorProto.
-func RegisterFile(filename string, fileDescriptor []byte) {
-	protoFiles[filename] = fileDescriptor
-}
-
-// FileDescriptor returns the compressed FileDescriptorProto for a .proto file.
-func FileDescriptor(filename string) []byte { return protoFiles[filename] }

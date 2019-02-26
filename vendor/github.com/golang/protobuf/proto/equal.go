@@ -1,33 +1,6 @@
-// Go support for Protocol Buffers - Google's data interchange format
-//
-// Copyright 2011 The Go Authors.  All rights reserved.
-// https://github.com/golang/protobuf
-//
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
-//
-//     * Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//     * Redistributions in binary form must reproduce the above
-// copyright notice, this list of conditions and the following disclaimer
-// in the documentation and/or other materials provided with the
-// distribution.
-//     * Neither the name of Google Inc. nor the names of its
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
 
 // Protocol buffer comparison.
 
@@ -38,6 +11,9 @@ import (
 	"log"
 	"reflect"
 	"strings"
+
+	"github.com/golang/protobuf/protoapi"
+	"github.com/golang/protobuf/v2/reflect/protoreflect"
 )
 
 /*
@@ -118,14 +94,18 @@ func equalStruct(v1, v2 reflect.Value) bool {
 
 	if em1 := v1.FieldByName("XXX_InternalExtensions"); em1.IsValid() {
 		em2 := v2.FieldByName("XXX_InternalExtensions")
-		if !equalExtensions(v1.Type(), em1.Interface().(XXX_InternalExtensions), em2.Interface().(XXX_InternalExtensions)) {
+		m1 := protoapi.ExtensionFieldsOf(em1.Addr().Interface())
+		m2 := protoapi.ExtensionFieldsOf(em2.Addr().Interface())
+		if !equalExtensions(v1.Type(), m1, m2) {
 			return false
 		}
 	}
 
 	if em1 := v1.FieldByName("XXX_extensions"); em1.IsValid() {
 		em2 := v2.FieldByName("XXX_extensions")
-		if !equalExtMap(v1.Type(), em1.Interface().(map[int32]Extension), em2.Interface().(map[int32]Extension)) {
+		m1 := protoapi.ExtensionFieldsOf(em1.Addr().Interface())
+		m2 := protoapi.ExtensionFieldsOf(em2.Addr().Interface())
+		if !equalExtensions(v1.Type(), m1, m2) {
 			return false
 		}
 	}
@@ -227,31 +207,26 @@ func equalAny(v1, v2 reflect.Value, prop *Properties) bool {
 	return false
 }
 
-// base is the struct type that the extensions are based on.
-// x1 and x2 are InternalExtensions.
-func equalExtensions(base reflect.Type, x1, x2 XXX_InternalExtensions) bool {
-	em1, _ := x1.extensionsRead()
-	em2, _ := x2.extensionsRead()
-	return equalExtMap(base, em1, em2)
-}
-
-func equalExtMap(base reflect.Type, em1, em2 map[int32]Extension) bool {
-	if len(em1) != len(em2) {
+func equalExtensions(base reflect.Type, em1, em2 protoapi.ExtensionFields) bool {
+	if em1.Len() != em2.Len() {
 		return false
 	}
 
-	for extNum, e1 := range em1 {
-		e2, ok := em2[extNum]
-		if !ok {
+	equal := true
+	em1.Range(func(extNum protoreflect.FieldNumber, e1 Extension) bool {
+		if !em2.Has(extNum) {
+			equal = false
 			return false
 		}
+		e2 := em2.Get(extNum)
 
-		m1, m2 := e1.value, e2.value
+		m1 := extensionAsLegacyType(e1.Value)
+		m2 := extensionAsLegacyType(e2.Value)
 
 		if m1 == nil && m2 == nil {
 			// Both have only encoded form.
-			if bytes.Equal(e1.enc, e2.enc) {
-				continue
+			if bytes.Equal(e1.Raw, e2.Raw) {
+				return true
 			}
 			// The bytes are different, but the extensions might still be
 			// equal. We need to decode them to compare.
@@ -260,16 +235,18 @@ func equalExtMap(base reflect.Type, em1, em2 map[int32]Extension) bool {
 		if m1 != nil && m2 != nil {
 			// Both are unencoded.
 			if !equalAny(reflect.ValueOf(m1), reflect.ValueOf(m2), nil) {
+				equal = false
 				return false
 			}
-			continue
+			return true
 		}
 
 		// At least one is encoded. To do a semantically correct comparison
 		// we need to unmarshal them first.
 		var desc *ExtensionDesc
-		if m := extensionMaps[base]; m != nil {
-			desc = m[extNum]
+		mz := reflect.Zero(reflect.PtrTo(base)).Interface().(Message)
+		if m := protoapi.RegisteredExtensions(mz); m != nil {
+			desc = m[int32(extNum)]
 		}
 		if desc == nil {
 			// If both have only encoded form and the bytes are the same,
@@ -277,24 +254,28 @@ func equalExtMap(base reflect.Type, em1, em2 map[int32]Extension) bool {
 			// We don't know how to decode it, so just compare them as byte
 			// slices.
 			log.Printf("proto: don't know how to compare extension %d of %v", extNum, base)
+			equal = false
 			return false
 		}
 		var err error
 		if m1 == nil {
-			m1, err = decodeExtension(e1.enc, desc)
+			m1, err = decodeExtension(e1.Raw, desc)
 		}
 		if m2 == nil && err == nil {
-			m2, err = decodeExtension(e2.enc, desc)
+			m2, err = decodeExtension(e2.Raw, desc)
 		}
 		if err != nil {
 			// The encoded form is invalid.
 			log.Printf("proto: badly encoded extension %d of %v: %v", extNum, base, err)
+			equal = false
 			return false
 		}
 		if !equalAny(reflect.ValueOf(m1), reflect.ValueOf(m2), nil) {
+			equal = false
 			return false
 		}
-	}
+		return true
+	})
 
-	return true
+	return equal
 }
