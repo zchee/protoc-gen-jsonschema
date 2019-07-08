@@ -1,31 +1,28 @@
 # github.com/alecthomas/jsonschema v0.0.0-20190122210438-a6952de1bbe6
 github.com/alecthomas/jsonschema
-# github.com/golang/protobuf v1.2.1-0.20181205191652-7e65e513332f
+# github.com/golang/protobuf v1.2.1-0.20190620192300-1ee46dfd80dd
+github.com/golang/protobuf/internal/proto
+github.com/golang/protobuf/internal/wire
 github.com/golang/protobuf/proto
-github.com/golang/protobuf/protoapi
 # github.com/golang/protobuf/v2 v2.0.0-20190221223758-71c6603a26f9
-github.com/golang/protobuf/v2/protogen
-github.com/golang/protobuf/v2/types/descriptor
-github.com/golang/protobuf/v2/types/plugin
-github.com/golang/protobuf/v2/internal/scalar
-github.com/golang/protobuf/v2/reflect/protodesc
-github.com/golang/protobuf/v2/reflect/protoreflect
-github.com/golang/protobuf/v2/reflect/protoregistry
-github.com/golang/protobuf/v2/reflect/prototype
-github.com/golang/protobuf/v2/runtime/protoimpl
+github.com/golang/protobuf/v2/internal/detrand
 github.com/golang/protobuf/v2/internal/encoding/defval
-github.com/golang/protobuf/v2/internal/errors
+github.com/golang/protobuf/v2/internal/encoding/text
 github.com/golang/protobuf/v2/internal/encoding/wire
+github.com/golang/protobuf/v2/internal/errors
+github.com/golang/protobuf/v2/internal/fileinit
+github.com/golang/protobuf/v2/internal/flags
+github.com/golang/protobuf/v2/internal/impl
 github.com/golang/protobuf/v2/internal/pragma
 github.com/golang/protobuf/v2/internal/set
 github.com/golang/protobuf/v2/internal/typefmt
 github.com/golang/protobuf/v2/internal/value
-github.com/golang/protobuf/v2/internal/fileinit
-github.com/golang/protobuf/v2/internal/impl
-github.com/golang/protobuf/v2/internal/encoding/text
-github.com/golang/protobuf/v2/internal/detrand
 github.com/golang/protobuf/v2/proto
-github.com/golang/protobuf/v2/internal/flags
+github.com/golang/protobuf/v2/reflect/protoreflect
+github.com/golang/protobuf/v2/reflect/prototype
+github.com/golang/protobuf/v2/runtime/protoimpl
+github.com/golang/protobuf/v2/types/descriptor
+github.com/golang/protobuf/v2/types/plugin
 # github.com/xeipuuv/gojsonpointer v0.0.0-20180127040702-4e3ac2762d5f
 github.com/xeipuuv/gojsonpointer
 # github.com/xeipuuv/gojsonreference v0.0.0-20180127040603-bd5ef7bd5415
@@ -38,10 +35,46 @@ go.uber.org/atomic
 go.uber.org/multierr
 # go.uber.org/zap v1.9.1
 go.uber.org/zap
-go.uber.org/zap/zapcore
-go.uber.org/zap/internal/bufferpool
 go.uber.org/zap/buffer
+go.uber.org/zap/internal/bufferpool
 go.uber.org/zap/internal/color
 go.uber.org/zap/internal/exit
-# golang.org/x/tools v0.0.0-20190221204921-83362c3779f5
-golang.org/x/tools/go/ast/astutil
+go.uber.org/zap/zapcore
+# google.golang.org/protobuf v0.0.0-20190703204651-15076350e84f
+google.golang.org/protobuf/encoding/prototext
+google.golang.org/protobuf/internal/descfmt
+google.golang.org/protobuf/internal/descopts
+google.golang.org/protobuf/internal/detrand
+google.golang.org/protobuf/internal/encoding/defval
+google.golang.org/protobuf/internal/encoding/tag
+google.golang.org/protobuf/internal/encoding/text
+google.golang.org/protobuf/internal/encoding/wire
+google.golang.org/protobuf/internal/errors
+google.golang.org/protobuf/internal/fieldnum
+google.golang.org/protobuf/internal/filedesc
+google.golang.org/protobuf/internal/filetype
+google.golang.org/protobuf/internal/flags
+google.golang.org/protobuf/internal/impl
+google.golang.org/protobuf/internal/mapsort
+google.golang.org/protobuf/internal/pragma
+google.golang.org/protobuf/internal/scalar
+google.golang.org/protobuf/internal/set
+google.golang.org/protobuf/internal/value
+google.golang.org/protobuf/proto
+google.golang.org/protobuf/reflect/protodesc
+google.golang.org/protobuf/reflect/protoreflect
+google.golang.org/protobuf/reflect/protoregistry
+google.golang.org/protobuf/reflect/prototype
+google.golang.org/protobuf/runtime/protoiface
+google.golang.org/protobuf/runtime/protoimpl
+google.golang.org/protobuf/types/descriptorpb
+google.golang.org/protobuf/types/known/anypb
+google.golang.org/protobuf/types/known/apipb
+google.golang.org/protobuf/types/known/durationpb
+google.golang.org/protobuf/types/known/emptypb
+google.golang.org/protobuf/types/known/fieldmaskpb
+google.golang.org/protobuf/types/known/sourcecontextpb
+google.golang.org/protobuf/types/known/structpb
+google.golang.org/protobuf/types/known/timestamppb
+google.golang.org/protobuf/types/known/typepb
+google.golang.org/protobuf/types/known/wrapperspb
