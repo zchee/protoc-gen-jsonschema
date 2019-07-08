@@ -117,10 +117,8 @@ func (mi *mergeInfo) merge(dst, src pointer) {
 	in := src.asPointerTo(mi.typ).Elem()
 	if emIn, err := extendable(in.Addr().Interface()); err == nil {
 		emOut, _ := extendable(out.Addr().Interface())
-		if emIn.HasInit() {
-			emIn.Lock()
+		if emIn != nil {
 			mergeExtension(emOut, emIn)
-			emIn.Unlock()
 		}
 	}
 
@@ -465,7 +463,7 @@ func (mi *mergeInfo) computeMergeInfo() {
 				}
 			}
 		case reflect.Slice:
-			isProto3 := props.Prop[i].proto3
+			isProto3 := props.Prop[i].Proto3
 			switch {
 			case isPointer:
 				panic("bad pointer in byte slice case in " + tf.Name())

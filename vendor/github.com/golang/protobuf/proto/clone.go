@@ -13,8 +13,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/golang/protobuf/protoapi"
-	"github.com/golang/protobuf/v2/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // Clone returns a deep copy of a protocol buffer.
@@ -86,10 +85,8 @@ func mergeStruct(out, in reflect.Value) {
 
 	if emIn, err := extendable(in.Addr().Interface()); err == nil {
 		emOut, _ := extendable(out.Addr().Interface())
-		if emIn.HasInit() {
-			emIn.Lock()
+		if emIn != nil {
 			mergeExtension(emOut, emIn)
-			emIn.Unlock()
 		}
 	}
 
@@ -176,7 +173,7 @@ func mergeAny(out, in reflect.Value, viaPtr bool, prop *Properties) {
 			// Edge case: if this is in a proto3 message, a zero length
 			// bytes field is considered the zero value, and should not
 			// be merged.
-			if prop != nil && prop.proto3 && in.Len() == 0 {
+			if prop != nil && prop.Proto3 && in.Len() == 0 {
 				return
 			}
 
@@ -209,17 +206,14 @@ func mergeAny(out, in reflect.Value, viaPtr bool, prop *Properties) {
 	}
 }
 
-func mergeExtension(out, in protoapi.ExtensionFields) {
+func mergeExtension(out, in *extensionMap) {
 	in.Range(func(extNum protoreflect.FieldNumber, eIn Extension) bool {
-		eOut := Extension{Desc: eIn.Desc}
-		if eIn.Value != nil {
-			v := reflect.New(reflect.TypeOf(eIn.Value)).Elem()
-			mergeAny(v, reflect.ValueOf(eIn.Value), false, nil)
-			eOut.Value = v.Interface()
-		}
-		if eIn.Raw != nil {
-			eOut.Raw = make([]byte, len(eIn.Raw))
-			copy(eOut.Raw, eIn.Raw)
+		var eOut Extension
+		eOut.SetType(eIn.GetType())
+		if eIn.HasValue() {
+			v := reflect.New(reflect.TypeOf(eIn.GetValue())).Elem()
+			mergeAny(v, reflect.ValueOf(eIn.GetValue()), false, nil)
+			eOut.SetEagerValue(v.Interface())
 		}
 
 		out.Set(extNum, eOut)

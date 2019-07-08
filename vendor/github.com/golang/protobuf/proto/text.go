@@ -19,8 +19,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/golang/protobuf/protoapi"
-	"github.com/golang/protobuf/v2/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 var (
@@ -180,7 +179,7 @@ func isAny(sv reflect.Value) bool {
 //
 // It returns (true, error) when sv was written in expanded format or an error
 // was encountered.
-func (tm *TextMarshaler) writeProto3Any(w *textWriter, sv reflect.Value) (bool, error) {
+func (tm *textMarshaler) writeProto3Any(w *textWriter, sv reflect.Value) (bool, error) {
 	turl := sv.FieldByName("TypeUrl")
 	val := sv.FieldByName("Value")
 	if !turl.IsValid() || !val.IsValid() {
@@ -226,7 +225,7 @@ func (tm *TextMarshaler) writeProto3Any(w *textWriter, sv reflect.Value) (bool, 
 	return true, nil
 }
 
-func (tm *TextMarshaler) writeStruct(w *textWriter, sv reflect.Value) error {
+func (tm *textMarshaler) writeStruct(w *textWriter, sv reflect.Value) error {
 	if tm.ExpandAny && isAny(sv) {
 		if canExpand, err := tm.writeProto3Any(w, sv); canExpand {
 			return err
@@ -364,7 +363,7 @@ func (tm *TextMarshaler) writeStruct(w *textWriter, sv reflect.Value) error {
 			}
 			continue
 		}
-		if props.proto3 && fv.Kind() == reflect.Slice && fv.Len() == 0 {
+		if props.Proto3 && fv.Kind() == reflect.Slice && fv.Len() == 0 {
 			// empty bytes field
 			continue
 		}
@@ -433,7 +432,7 @@ func (tm *TextMarshaler) writeStruct(w *textWriter, sv reflect.Value) error {
 }
 
 // writeAny writes an arbitrary field.
-func (tm *TextMarshaler) writeAny(w *textWriter, v reflect.Value, props *Properties) error {
+func (tm *textMarshaler) writeAny(w *textWriter, v reflect.Value, props *Properties) error {
 	v = reflect.Indirect(v)
 
 	// Floats have special cases.
@@ -652,36 +651,29 @@ func (s fieldNumSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 // writeExtensions writes all the extensions in pv.
 // pv is assumed to be a pointer to a protocol message struct that is extendable.
-func (tm *TextMarshaler) writeExtensions(w *textWriter, pv reflect.Value) error {
-	emap := protoapi.RegisteredExtensions(pv.Interface().(Message))
+func (tm *textMarshaler) writeExtensions(w *textWriter, pv reflect.Value) error {
+	emap := RegisteredExtensions(pv.Interface().(Message))
 	ep, _ := extendable(pv.Interface())
 
 	// Order the extensions by ID.
 	// This isn't strictly necessary, but it will give us
 	// canonical output, which will also make testing easier.
-	if !ep.HasInit() {
+	if ep == nil {
 		return nil
 	}
-	ep.Lock()
 	ids := make([]protoreflect.FieldNumber, 0, ep.Len())
 	ep.Range(func(id protoreflect.FieldNumber, _ Extension) bool {
 		ids = append(ids, id)
 		return true
 	})
 	sort.Sort(fieldNumSlice(ids))
-	ep.Unlock()
 
 	for _, extNum := range ids {
-		ext := ep.Get(extNum)
 		var desc *ExtensionDesc
 		if emap != nil {
 			desc = emap[int32(extNum)]
 		}
 		if desc == nil {
-			// Unknown extension.
-			if err := writeUnknownStruct(w, ext.Raw); err != nil {
-				return err
-			}
 			continue
 		}
 
@@ -707,7 +699,7 @@ func (tm *TextMarshaler) writeExtensions(w *textWriter, pv reflect.Value) error 
 	return nil
 }
 
-func (tm *TextMarshaler) writeExtension(w *textWriter, name string, pb interface{}) error {
+func (tm *textMarshaler) writeExtension(w *textWriter, name string, pb interface{}) error {
 	if _, err := fmt.Fprintf(w, "[%s]:", name); err != nil {
 		return err
 	}
@@ -741,15 +733,15 @@ func (w *textWriter) writeIndent() {
 	w.complete = false
 }
 
-// TextMarshaler is a configurable text format marshaler.
-type TextMarshaler struct {
+// textMarshaler is a configurable text format marshaler.
+type textMarshaler struct {
 	Compact   bool // use compact text format (one line).
 	ExpandAny bool // expand google.protobuf.Any messages of known types
 }
 
 // Marshal writes a given protocol buffer in text format.
 // The only errors returned are from w.
-func (tm *TextMarshaler) Marshal(w io.Writer, pb Message) error {
+func (tm *textMarshaler) Marshal(w io.Writer, pb Message) error {
 	val := reflect.ValueOf(pb)
 	if pb == nil || val.IsNil() {
 		w.Write([]byte("<nil>"))
@@ -792,32 +784,48 @@ func (tm *TextMarshaler) Marshal(w io.Writer, pb Message) error {
 }
 
 // Text is the same as Marshal, but returns the string directly.
-func (tm *TextMarshaler) Text(pb Message) string {
+func (tm *textMarshaler) Text(pb Message) string {
 	var buf bytes.Buffer
 	tm.Marshal(&buf, pb)
 	return buf.String()
 }
 
 var (
-	defaultTextMarshaler = TextMarshaler{}
-	compactTextMarshaler = TextMarshaler{Compact: true}
+	defaultTextMarshaler = textMarshaler{}
+	compactTextMarshaler = textMarshaler{Compact: true}
 )
 
 // TODO: consider removing some of the Marshal functions below.
 
 // MarshalText writes a given protocol buffer in text format.
 // The only errors returned are from w.
-func MarshalText(w io.Writer, pb Message) error { return defaultTextMarshaler.Marshal(w, pb) }
+func MarshalText(w io.Writer, pb Message) error {
+	if marshalTextAlt != nil {
+		return marshalTextAlt(w, pb)
+	}
+	return defaultTextMarshaler.Marshal(w, pb)
+}
 
 // MarshalTextString is the same as MarshalText, but returns the string directly.
-func MarshalTextString(pb Message) string { return defaultTextMarshaler.Text(pb) }
+func MarshalTextString(pb Message) string {
+	if marshalTextStringAlt != nil {
+		return marshalTextStringAlt(pb)
+	}
+	return defaultTextMarshaler.Text(pb)
+}
 
 // CompactText writes a given protocol buffer in compact text format (one line).
-func CompactText(w io.Writer, pb Message) error { return compactTextMarshaler.Marshal(w, pb) }
+func CompactText(w io.Writer, pb Message) error {
+	if compactTextAlt != nil {
+		return compactTextAlt(w, pb)
+	}
+	return compactTextMarshaler.Marshal(w, pb)
+}
 
 // CompactTextString is the same as CompactText, but returns the string directly.
-func CompactTextString(pb Message) string { return compactTextMarshaler.Text(pb) }
-
-func init() {
-	protoapi.CompactTextString = CompactTextString
+func CompactTextString(pb Message) string {
+	if compactTextStringAlt != nil {
+		return compactTextStringAlt(pb)
+	}
+	return compactTextMarshaler.Text(pb)
 }

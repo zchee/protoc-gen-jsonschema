@@ -12,8 +12,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/golang/protobuf/protoapi"
-	"github.com/golang/protobuf/v2/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 /*
@@ -94,8 +93,8 @@ func equalStruct(v1, v2 reflect.Value) bool {
 
 	if em1 := v1.FieldByName("XXX_InternalExtensions"); em1.IsValid() {
 		em2 := v2.FieldByName("XXX_InternalExtensions")
-		m1 := protoapi.ExtensionFieldsOf(em1.Addr().Interface())
-		m2 := protoapi.ExtensionFieldsOf(em2.Addr().Interface())
+		m1 := extensionFieldsOf(em1.Addr().Interface())
+		m2 := extensionFieldsOf(em2.Addr().Interface())
 		if !equalExtensions(v1.Type(), m1, m2) {
 			return false
 		}
@@ -103,8 +102,8 @@ func equalStruct(v1, v2 reflect.Value) bool {
 
 	if em1 := v1.FieldByName("XXX_extensions"); em1.IsValid() {
 		em2 := v2.FieldByName("XXX_extensions")
-		m1 := protoapi.ExtensionFieldsOf(em1.Addr().Interface())
-		m2 := protoapi.ExtensionFieldsOf(em2.Addr().Interface())
+		m1 := extensionFieldsOf(em1.Addr().Interface())
+		m2 := extensionFieldsOf(em2.Addr().Interface())
 		if !equalExtensions(v1.Type(), m1, m2) {
 			return false
 		}
@@ -176,7 +175,7 @@ func equalAny(v1, v2 reflect.Value, prop *Properties) bool {
 
 			// Edge case: if this is in a proto3 message, a zero length
 			// bytes field is considered the zero value.
-			if prop != nil && prop.proto3 && v1.Len() == 0 && v2.Len() == 0 {
+			if prop != nil && prop.Proto3 && v1.Len() == 0 && v2.Len() == 0 {
 				return true
 			}
 			if v1.IsNil() != v2.IsNil() {
@@ -207,7 +206,7 @@ func equalAny(v1, v2 reflect.Value, prop *Properties) bool {
 	return false
 }
 
-func equalExtensions(base reflect.Type, em1, em2 protoapi.ExtensionFields) bool {
+func equalExtensions(base reflect.Type, em1, em2 *extensionMap) bool {
 	if em1.Len() != em2.Len() {
 		return false
 	}
@@ -220,16 +219,11 @@ func equalExtensions(base reflect.Type, em1, em2 protoapi.ExtensionFields) bool 
 		}
 		e2 := em2.Get(extNum)
 
-		m1 := extensionAsLegacyType(e1.Value)
-		m2 := extensionAsLegacyType(e2.Value)
+		m1 := extensionAsLegacyType(e1.GetValue())
+		m2 := extensionAsLegacyType(e2.GetValue())
 
 		if m1 == nil && m2 == nil {
-			// Both have only encoded form.
-			if bytes.Equal(e1.Raw, e2.Raw) {
-				return true
-			}
-			// The bytes are different, but the extensions might still be
-			// equal. We need to decode them to compare.
+			return true
 		}
 
 		if m1 != nil && m2 != nil {
@@ -241,40 +235,8 @@ func equalExtensions(base reflect.Type, em1, em2 protoapi.ExtensionFields) bool 
 			return true
 		}
 
-		// At least one is encoded. To do a semantically correct comparison
-		// we need to unmarshal them first.
-		var desc *ExtensionDesc
-		mz := reflect.Zero(reflect.PtrTo(base)).Interface().(Message)
-		if m := protoapi.RegisteredExtensions(mz); m != nil {
-			desc = m[int32(extNum)]
-		}
-		if desc == nil {
-			// If both have only encoded form and the bytes are the same,
-			// it is handled above. We get here when the bytes are different.
-			// We don't know how to decode it, so just compare them as byte
-			// slices.
-			log.Printf("proto: don't know how to compare extension %d of %v", extNum, base)
-			equal = false
-			return false
-		}
-		var err error
-		if m1 == nil {
-			m1, err = decodeExtension(e1.Raw, desc)
-		}
-		if m2 == nil && err == nil {
-			m2, err = decodeExtension(e2.Raw, desc)
-		}
-		if err != nil {
-			// The encoded form is invalid.
-			log.Printf("proto: badly encoded extension %d of %v: %v", extNum, base, err)
-			equal = false
-			return false
-		}
-		if !equalAny(reflect.ValueOf(m1), reflect.ValueOf(m2), nil) {
-			equal = false
-			return false
-		}
-		return true
+		equal = false
+		return false
 	})
 
 	return equal

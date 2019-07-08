@@ -11,7 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/golang/protobuf/v2/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 type generatedDiscarder interface {
@@ -30,6 +30,11 @@ type generatedDiscarder interface {
 // For proto2 messages, the unknown fields of message extensions are only
 // discarded from messages that have been accessed via GetExtension.
 func DiscardUnknown(m Message) {
+	if discardUnknownAlt != nil {
+		discardUnknownAlt(m) // populated by hooks_enabled.go
+		return
+	}
+
 	if m, ok := m.(generatedDiscarder); ok {
 		m.XXX_DiscardUnknown()
 		return
@@ -99,7 +104,7 @@ func (di *discardInfo) discard(src pointer) {
 	// that have been accessed via GetExtension.
 	if em, err := extendable(src.asPointerTo(di.typ).Interface()); err == nil {
 		em.Range(func(_ protoreflect.FieldNumber, mx Extension) bool {
-			if m, ok := mx.Value.(Message); ok {
+			if m, ok := mx.GetValue().(Message); ok {
 				DiscardUnknown(m)
 			}
 			return true
@@ -314,7 +319,7 @@ func discardLegacy(m Message) {
 	// that have been accessed via GetExtension.
 	if em, err := extendable(m); err == nil {
 		em.Range(func(_ protoreflect.FieldNumber, mx Extension) bool {
-			if m, ok := mx.Value.(Message); ok {
+			if m, ok := mx.GetValue().(Message); ok {
 				discardLegacy(m)
 			}
 			return true

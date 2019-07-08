@@ -14,9 +14,8 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
-
-	"github.com/golang/protobuf/protoapi"
 )
 
 // Error string emitted when deserializing Any and fields are already set
@@ -339,8 +338,8 @@ func (p *textParser) consumeToken(s string) error {
 	return nil
 }
 
-// Return a RequiredNotSetError indicating which required field was not set.
-func (p *textParser) missingRequiredFieldError(sv reflect.Value) *RequiredNotSetError {
+// Return a requiredNotSetError indicating which required field was not set.
+func (p *textParser) missingRequiredFieldError(sv reflect.Value) *requiredNotSetError {
 	st := sv.Type()
 	sprops := GetProperties(st)
 	for i := 0; i < st.NumField(); i++ {
@@ -350,14 +349,14 @@ func (p *textParser) missingRequiredFieldError(sv reflect.Value) *RequiredNotSet
 
 		props := sprops.Prop[i]
 		if props.Required {
-			return &RequiredNotSetError{fmt.Sprintf("%v.%v", st, props.OrigName)}
+			return &requiredNotSetError{fmt.Sprintf("%v.%v", st, props.OrigName)}
 		}
 	}
-	return &RequiredNotSetError{fmt.Sprintf("%v.<unknown field name>", st)} // should not happen
+	return &requiredNotSetError{fmt.Sprintf("%v.<unknown field name>", st)} // should not happen
 }
 
 // Returns the index in the struct for the named field, as well as the parsed tag properties.
-func structFieldByName(sprops *StructProperties, name string) (int, *Properties, bool) {
+func structFieldByName(sprops *textStructProperties, name string) (int, *Properties, bool) {
 	i, ok := sprops.decoderOrigNames[name]
 	if ok {
 		return i, sprops.Prop[i], true
@@ -407,9 +406,42 @@ func (p *textParser) checkForColon(props *Properties, typ reflect.Type) *ParseEr
 	return nil
 }
 
+var textPropertiesCache sync.Map // map[reflect.Type]*textStructProperties
+
+type textStructProperties struct {
+	*StructProperties
+	reqCount         int
+	decoderOrigNames map[string]int
+}
+
+func getTextProperties(t reflect.Type) *textStructProperties {
+	if p, ok := textPropertiesCache.Load(t); ok {
+		return p.(*textStructProperties)
+	}
+
+	prop := &textStructProperties{StructProperties: GetProperties(t)}
+	reqCount := 0
+	prop.decoderOrigNames = make(map[string]int)
+	for i, p := range prop.Prop {
+		if strings.HasPrefix(p.Name, "XXX_") {
+			// Internal fields should not appear in tags/origNames maps.
+			// They are handled specially when encoding and decoding.
+			continue
+		}
+		if p.Required {
+			reqCount++
+		}
+		prop.decoderOrigNames[p.OrigName] = i
+	}
+	prop.reqCount = reqCount
+
+	textPropertiesCache.Store(t, prop)
+	return prop
+}
+
 func (p *textParser) readStruct(sv reflect.Value, terminator string) error {
 	st := sv.Type()
-	sprops := GetProperties(st)
+	sprops := getTextProperties(st)
 	reqCount := sprops.reqCount
 	var reqFieldErr error
 	fieldSet := make(map[string]bool)
@@ -517,7 +549,7 @@ func (p *textParser) readStruct(sv reflect.Value, terminator string) error {
 				ext = reflect.New(typ.Elem()).Elem()
 			}
 			if err := p.readAny(ext, props); err != nil {
-				if _, ok := err.(*RequiredNotSetError); !ok {
+				if _, ok := err.(*requiredNotSetError); !ok {
 					return err
 				}
 				reqFieldErr = err
@@ -643,7 +675,7 @@ func (p *textParser) readStruct(sv reflect.Value, terminator string) error {
 		// Parse into the field.
 		fieldSet[name] = true
 		if err := p.readAny(dst, props); err != nil {
-			if _, ok := err.(*RequiredNotSetError); !ok {
+			if _, ok := err.(*requiredNotSetError); !ok {
 				return err
 			}
 			reqFieldErr = err
@@ -789,7 +821,7 @@ func (p *textParser) readAny(v reflect.Value, props *Properties) error {
 		if len(props.Enum) == 0 {
 			break
 		}
-		m := protoapi.EnumValueMap(props.Enum)
+		m := EnumValueMap(props.Enum)
 		if m == nil {
 			break
 		}
@@ -844,8 +876,11 @@ func (p *textParser) readAny(v reflect.Value, props *Properties) error {
 // UnmarshalText reads a protocol buffer in Text format. UnmarshalText resets pb
 // before starting to unmarshal, so any existing data in pb is always removed.
 // If a required field is not set and no other error occurs,
-// UnmarshalText returns *RequiredNotSetError.
+// UnmarshalText returns *requiredNotSetError.
 func UnmarshalText(s string, pb Message) error {
+	if unmarshalTextAlt != nil {
+		return unmarshalTextAlt(s, pb) // populated by hooks_enabled.go
+	}
 	if um, ok := pb.(encoding.TextUnmarshaler); ok {
 		return um.UnmarshalText([]byte(s))
 	}

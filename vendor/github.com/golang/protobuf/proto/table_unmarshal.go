@@ -16,8 +16,8 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
-	"github.com/golang/protobuf/protoapi"
-	"github.com/golang/protobuf/v2/reflect/protoreflect"
+	"github.com/golang/protobuf/internal/wire"
+	"google.golang.org/protobuf/runtime/protoimpl"
 )
 
 // Unmarshal is the entry point from the generated .pb.go files.
@@ -112,10 +112,11 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 		u.computeUnmarshalInfo()
 	}
 	if u.isMessageSet {
-		return unmarshalMessageSet(b, m.offset(u.extensions).toExtensions())
+		return unmarshalMessageSet(b, m.asPointerTo(u.typ).Interface().(Message), m.offset(u.extensions).toExtensions())
 	}
 	var reqMask uint64 // bitmask of required fields we've seen.
 	var errLater error
+	var hasExtensions bool
 	for len(b) > 0 {
 		// Read tag and wire type.
 		// Special case 1 and 2 byte varints.
@@ -151,7 +152,7 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 				reqMask |= f.reqMask
 				continue
 			}
-			if r, ok := err.(*RequiredNotSetError); ok {
+			if r, ok := err.(*requiredNotSetError); ok {
 				// Remember this error, but keep parsing. We need to produce
 				// a full parse even if a required field is missing.
 				if errLater == nil {
@@ -164,7 +165,7 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 				if err == errInvalidUTF8 {
 					if errLater == nil {
 						mz := reflect.Zero(reflect.PtrTo(u.typ)).Interface().(Message)
-						fullName := protoapi.MessageName(mz) + "." + f.name
+						fullName := MessageName(mz) + "." + f.name
 						errLater = &invalidUTF8Error{fullName}
 					}
 					continue
@@ -187,25 +188,9 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 		// Keep unrecognized data around.
 		// maybe in extensions, maybe in the unrecognized field.
 		z := m.offset(u.unrecognized).toBytes()
-		var emap protoapi.ExtensionFields
-		var e Extension
 		for _, r := range u.extensionRanges {
 			if uint64(r.Start) <= tag && tag <= uint64(r.End) {
-				if u.extensions.IsValid() {
-					mp := m.offset(u.extensions).toExtensions()
-					emap = protoapi.ExtensionFieldsOf(mp)
-					e = emap.Get(protoreflect.FieldNumber(tag))
-					z = &e.Raw
-					break
-				}
-				if u.oldExtensions.IsValid() {
-					p := m.offset(u.oldExtensions).toOldExtensions()
-					emap = protoapi.ExtensionFieldsOf(p)
-					e = emap.Get(protoreflect.FieldNumber(tag))
-					z = &e.Raw
-					break
-				}
-				panic("no extensions field available")
+				hasExtensions = true
 			}
 		}
 
@@ -218,21 +203,89 @@ func (u *unmarshalInfo) unmarshal(m pointer, b []byte) error {
 		}
 		*z = encodeVarint(*z, tag<<3|uint64(wire))
 		*z = append(*z, b0[:len(b0)-len(b)]...)
+	}
 
-		if emap != nil {
-			emap.Set(protoreflect.FieldNumber(tag), e)
+	// If there were unknown extensions, eagerly unmarshal them.
+	if hasExtensions {
+		var nerr nonFatal
+		mi := m.asPointerTo(u.typ).Interface().(Message)
+		unrecognized := m.offset(u.unrecognized).toBytes()
+		if err := unmarshalExtensions(mi, unrecognized); !nerr.Merge(err) {
+			return err
 		}
 	}
+
 	if reqMask != u.reqMask && errLater == nil {
 		// A required field of this message is missing.
 		for _, n := range u.reqFields {
 			if reqMask&1 == 0 {
-				errLater = &RequiredNotSetError{n}
+				errLater = &requiredNotSetError{n}
 			}
 			reqMask >>= 1
 		}
 	}
 	return errLater
+}
+
+func unmarshalExtensions(mi Message, unrecognized *[]byte) error {
+	extFields, _ := extendable(mi)
+	if extFields == nil {
+		return nil
+	}
+
+	emap := RegisteredExtensions(mi) // map[int32]*ExtensionDesc
+	oldUnknownFields := *unrecognized
+	newUnknownFields := oldUnknownFields[:0]
+
+	for len(oldUnknownFields) > 0 {
+		fieldNum, wireTyp, tagLen := wire.ConsumeTag(oldUnknownFields)
+		if tagLen < 0 {
+			return wire.ParseError(tagLen)
+		}
+		extDesc, ok := emap[int32(fieldNum)]
+		if !ok || extDesc.ExtensionType == nil {
+			valLen := wire.ConsumeFieldValue(fieldNum, wireTyp, oldUnknownFields[tagLen:])
+			if valLen < 0 {
+				return wire.ParseError(valLen)
+			}
+
+			newUnknownFields = append(newUnknownFields, oldUnknownFields[:tagLen+valLen]...)
+			oldUnknownFields = oldUnknownFields[tagLen+valLen:]
+			continue
+		}
+		oldUnknownFields = oldUnknownFields[tagLen:]
+
+		if err := checkExtensionTypeAndRanges(mi, extDesc); err != nil {
+			return err
+		}
+
+		// Create a new value or reuse an existing one.
+		fieldType := reflect.TypeOf(extDesc.ExtensionType)
+		fieldVal := reflect.New(fieldType).Elem() // E.g., *int32, *Message, []T
+		if extField := extFields.Get(fieldNum); extField.HasValue() {
+			fieldVal.Set(reflect.ValueOf(extensionAsLegacyType(extField.GetValue())))
+		}
+
+		// Unmarshal the value.
+		var err error
+		var nerr nonFatal
+		unmarshal := typeUnmarshaler(fieldType, extDesc.Tag)
+		if oldUnknownFields, err = unmarshal(oldUnknownFields, valToPointer(fieldVal.Addr()), int(wireTyp)); !nerr.Merge(err) {
+			return err
+		}
+
+		// Store the value into the extension field.
+		var x Extension
+		x.SetType(protoimpl.X.ExtensionTypeFromDesc(extDesc))
+		x.SetEagerValue(extensionAsStorageType(fieldVal.Interface()))
+		extFields.Set(fieldNum, x)
+	}
+
+	if len(newUnknownFields) == 0 {
+		newUnknownFields = nil // NOTE: code actually depends on this...
+	}
+	*unrecognized = newUnknownFields
+	return nil
 }
 
 // computeUnmarshalInfo fills in u with information for use
@@ -1618,7 +1671,7 @@ func makeUnmarshalMessagePtr(sub *unmarshalInfo, name string) unmarshaler {
 		}
 		err := sub.unmarshal(v, b[:x])
 		if err != nil {
-			if r, ok := err.(*RequiredNotSetError); ok {
+			if r, ok := err.(*requiredNotSetError); ok {
 				r.field = name + "." + r.field
 			} else {
 				return nil, err
@@ -1644,7 +1697,7 @@ func makeUnmarshalMessageSlicePtr(sub *unmarshalInfo, name string) unmarshaler {
 		v := valToPointer(reflect.New(sub.typ))
 		err := sub.unmarshal(v, b[:x])
 		if err != nil {
-			if r, ok := err.(*RequiredNotSetError); ok {
+			if r, ok := err.(*requiredNotSetError); ok {
 				r.field = name + "." + r.field
 			} else {
 				return nil, err
@@ -1671,7 +1724,7 @@ func makeUnmarshalGroupPtr(sub *unmarshalInfo, name string) unmarshaler {
 		}
 		err := sub.unmarshal(v, b[:x])
 		if err != nil {
-			if r, ok := err.(*RequiredNotSetError); ok {
+			if r, ok := err.(*requiredNotSetError); ok {
 				r.field = name + "." + r.field
 			} else {
 				return nil, err
@@ -1693,7 +1746,7 @@ func makeUnmarshalGroupSlicePtr(sub *unmarshalInfo, name string) unmarshaler {
 		v := valToPointer(reflect.New(sub.typ))
 		err := sub.unmarshal(v, b[:x])
 		if err != nil {
-			if r, ok := err.(*RequiredNotSetError); ok {
+			if r, ok := err.(*requiredNotSetError); ok {
 				r.field = name + "." + r.field
 			} else {
 				return nil, err
