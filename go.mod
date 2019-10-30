@@ -13,6 +13,6 @@ require (
 	github.com/xeipuuv/gojsonschema v1.1.0
 	go.uber.org/atomic v1.3.2 // indirect
 	go.uber.org/multierr v1.1.0 // indirect
-	go.uber.org/zap v1.9.1
+	go.uber.org/zap v1.12.0
 	google.golang.org/protobuf v0.0.0-20190703204651-15076350e84f
 )
